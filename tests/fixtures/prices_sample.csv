@@ -1,0 +1,7 @@
+day;timestamp;product;bid_price_1;bid_volume_1;bid_price_2;bid_volume_2;bid_price_3;bid_volume_3;ask_price_1;ask_volume_1;ask_price_2;ask_volume_2;ask_price_3;ask_volume_3;mid_price;profit_and_loss
+-1;0;TOMATOES;4999;5;4998;15;;;5013;5;5014;15;;;5006.0;0.0
+-1;0;EMERALDS;9992;14;9990;29;;;10008;14;10010;29;;;10000.0;0.0
+-1;100;EMERALDS;9992;11;9990;22;;;10008;11;10010;22;;;10000.0;0.0
+-1;100;TOMATOES;5000;8;4998;21;;;5013;8;5014;21;;;5006.5;0.0
+-1;200;EMERALDS;9992;15;9990;20;;;10008;15;10010;20;;;10000.0;0.0
+-1;200;TOMATOES;5000;10;4999;20;;;5013;10;5015;20;;;5006.5;0.0
