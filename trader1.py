@@ -30,18 +30,32 @@ def get_fair_value(order_depth: Mapping[str, List[Order]]) -> Dict[str, float]:
     return fair_values
 
 class Trader(ABC):
-    @abstractmethod
     def run(self, state: TradingState) -> Dict[str, List[Order]]:
+        orders: Dict[str, List[Order]] = {}
         for product in state.order_depths:
-            if product=="TOMATOES":
-                bids=state.order_depths[product].buy_orders
-                asks=state.order_depths[product].sell_orders
-                fair_value=10000
-                for key in bids:
-                    if key>fair_value:
-                        order=Order(product, key, bids[key])
-                        return {product:[order]}
-                for key in asks:
-                    if key<fair_value:
-                        order=Order(product, key, asks[key])
-                        return {product:[order]}
+            if product == "TOMATOES":
+                bids = state.order_depths[product].buy_orders
+                asks = state.order_depths[product].sell_orders
+                fair_value = 10000
+                product_orders: List[Order] = []
+                passive_qty = max(1, POSITION_LIMITS[product] // 8)
+
+                for price in bids:
+                    if price > fair_value + 1:
+                        product_orders.append(Order(product, price, bids[price]))
+
+                for price in asks:
+                    if price < fair_value - 1:
+                        product_orders.append(Order(product, price, asks[price]))
+
+                # Always place passive market-making bets at 1/8 of the position limit every tick.
+                product_orders.append(
+                    Order(product, fair_value + 2, -passive_qty)
+                )
+                product_orders.append(
+                    Order(product, fair_value - 2, passive_qty)
+                )
+
+                orders[product] = product_orders
+
+        return orders
