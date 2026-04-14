@@ -10,15 +10,19 @@ This repository is a safe, minimal Python trading interface for IMC Prosperity 4
 - computes fair value from the best bid and best ask midpoint
 - keeps sizes tiny and clips every order against worst-case position limits
 - stores only a small JSON payload in `traderData`
+- includes `visualizer.py` for rendering submission logs or CSV data into an HTML report
 
 ## Project layout
 
 - `trader.py`: submission-facing interface and orchestration
+- `trader1.py`: alternate single-file strategy variant for experimentation
 - `strategy.py`: fair value, quote sizing, and conservative order generation
 - `state_utils.py`: safe readers for books, positions, trades, observations, and `traderData`
 - `risk.py`: hard position guardrails and worst-case fill clipping
 - `persistence.py`: plain JSON serialization for `traderData`
 - `local_datamodel.py`: local fallback types for testing when official `datamodel` is absent
+- `visualizer.py`: HTML report generator for submission logs in `logs/` or local CSV data in `data/`
+- `logs/`: downloaded submission logs such as `95046.log`
 - `tests/test_trader.py`: unit tests and one smoke test built from provided sample schema
 
 ## Official vs assumed
@@ -30,6 +34,7 @@ Working constraints used here:
 - Public tooling and mirrored docs strongly indicate a Python `Trader` class with `run(self, state)`.
 - Public tooling and the context pack indicate `run()` should return `(result, conversions, traderData)`.
 - The provided sample CSVs confirm tutorial products `EMERALDS` and `TOMATOES`, semicolon-delimited price snapshots, and multi-level bid/ask columns.
+- The downloaded submission logs in `logs/` are JSON objects containing `activitiesLog`, `tradeHistory`, and per-timestamp diagnostic `logs`.
 
 Still assumed until verified inside the official platform:
 
@@ -65,6 +70,51 @@ Once you have the real starter files:
 - no filesystem or environment-variable assumptions
 - no third-party dependencies
 - no use of sample data to infer hidden competition mechanics
+
+## Visualizing runs
+
+`visualizer.py` supports two input modes:
+
+- `logs`: JSON submission logs in `logs/` such as `logs/95046.log`
+- `csv`: semicolon-delimited local data files in `data/`
+
+By default, it reads the submission logs in `logs/` and writes `visualizer_report.html`.
+
+### Default log workflow
+
+```bash
+python visualizer.py
+```
+
+This renders an HTML report with:
+
+- total PnL over time for each run
+- per-product best bid / best ask / mid-price charts
+- submission and market trade markers
+- per-product PnL charts
+- submission position charts
+- summary metrics such as spread, fill averages, drawdown, and trade counts
+- short excerpts from non-empty sandbox or lambda logs
+
+### Common options
+
+Render only one product and open the result:
+
+```bash
+python visualizer.py --product EMERALDS --open
+```
+
+Choose an explicit logs directory and output path:
+
+```bash
+python visualizer.py --mode logs --logs-dir logs --output my_report.html
+```
+
+Force CSV mode against local sample data:
+
+```bash
+python visualizer.py --mode csv --data-dir data --output csv_report.html
+```
 
 ## Running tests
 
