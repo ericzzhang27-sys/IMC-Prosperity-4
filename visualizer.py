@@ -297,13 +297,17 @@ def read_price_points_from_csv(
                 if product_filter and product not in product_filter:
                     continue
 
+                best_bid = _to_float(row.get("bid_price_1"))
+                best_ask = _to_float(row.get("ask_price_1"))
+                mid_price = (best_bid + best_ask) / 2.0 if best_bid is not None and best_ask is not None else None
+
                 point = PricePoint(
                     day=_to_int(row.get("day")) or 0,
                     timestamp=_to_int(row.get("timestamp")) or 0,
                     product=product,
-                    best_bid=_to_float(row.get("bid_price_1")),
-                    best_ask=_to_float(row.get("ask_price_1")),
-                    mid_price=_to_float(row.get("mid_price")),
+                    best_bid=best_bid,
+                    best_ask=best_ask,
+                    mid_price=mid_price,
                     pnl=_to_float(row.get("profit_and_loss")),
                 )
                 grouped.setdefault(product, []).append(point)
@@ -389,13 +393,17 @@ def parse_activities_log(
         if product_filter and product not in product_filter:
             continue
 
+        best_bid = _to_float(row.get("bid_price_1"))
+        best_ask = _to_float(row.get("ask_price_1"))
+        mid_price = (best_bid + best_ask) / 2.0 if best_bid is not None and best_ask is not None else None
+
         point = PricePoint(
             day=_to_int(row.get("day")) or 0,
             timestamp=_to_int(row.get("timestamp")) or 0,
             product=product,
-            best_bid=_to_float(row.get("bid_price_1")),
-            best_ask=_to_float(row.get("ask_price_1")),
-            mid_price=_to_float(row.get("mid_price")),
+            best_bid=best_bid,
+            best_ask=best_ask,
+            mid_price=mid_price,
             pnl=_to_float(row.get("profit_and_loss")),
         )
         grouped.setdefault(product, []).append(point)
@@ -615,9 +623,16 @@ def build_trade_markers(
     return "".join(circles)
 
 
-def build_price_chart(product: str, prices: Sequence[PricePoint], trades: Sequence[TradePoint]) -> str:
+def build_price_chart(product: str, prices: Sequence[PricePoint], trades: Sequence[TradePoint], min_ts: int | None = None, max_ts: int | None = None, add_zoom: bool = True) -> str:
     if not prices:
         return ""
+
+    # Filter by timestamp
+    if min_ts is not None or max_ts is not None:
+        prices = [p for p in prices if (min_ts is None or p.timestamp >= min_ts) and (max_ts is None or p.timestamp <= max_ts)]
+        trades = [t for t in trades if (min_ts is None or t.timestamp >= min_ts) and (max_ts is None or t.timestamp <= max_ts)]
+        if not prices:
+            return ""
 
     sampled_prices = downsample_points(prices, MAX_RENDER_POINTS)
     bounds = compute_padded_bounds(
@@ -646,8 +661,14 @@ def build_price_chart(product: str, prices: Sequence[PricePoint], trades: Sequen
         if point.mid_price is not None
     ]
 
+    # Calculate actual min and max ts for zoom
+    actual_min_ts = min(p.timestamp for p in prices) if prices else 0
+    actual_max_ts = max(p.timestamp for p in prices) if prices else 0
+
+    onclick_attr = f' onclick="zoomChart(this, event, {actual_min_ts}, {actual_max_ts})"' if add_zoom else ''
+
     svg = f"""
-    <svg viewBox="0 0 {SVG_WIDTH} {SVG_HEIGHT}" role="img" aria-label="{html.escape(product)} price chart">
+    <svg viewBox="0 0 {SVG_WIDTH} {SVG_HEIGHT}" role="img" aria-label="{html.escape(product)} price chart"{onclick_attr}>
       {build_axes(minimum, maximum)}
       {build_day_markers(sampled_prices)}
       {build_polyline(bid_points, "#2f855a")}
@@ -656,6 +677,8 @@ def build_price_chart(product: str, prices: Sequence[PricePoint], trades: Sequen
       {build_trade_markers(sampled_prices, trades, minimum, maximum)}
     </svg>
     """
+
+    reset_button = f'<button onclick="resetZoom(this.previousElementSibling)">Reset Zoom</button>' if add_zoom else ''
 
     return f"""
     <section class="chart-card">
@@ -667,6 +690,7 @@ def build_price_chart(product: str, prices: Sequence[PricePoint], trades: Sequen
         <span><span class="legend-swatch trade"></span>Trade Marker</span>
       </div>
       {svg}
+      {reset_button}
     </section>
     """
 
@@ -740,6 +764,7 @@ def build_run_section(run: RunData) -> str:
         sections.append(build_summary_card(f"{product} Metrics", summarise_product(product, prices, trades, positions)))
         sections.append('<div class="product-charts">')
         sections.append(build_price_chart(product, prices, trades))
+        sections.append(build_price_chart(f"{product} (0-1000)", prices, trades, 0, 1000, add_zoom=False))
 
         pnl_points = [
             TimeValuePoint(day=point.day, timestamp=point.timestamp, value=point.pnl)
@@ -915,6 +940,28 @@ def build_html_report(runs: Sequence[RunData], mode: str) -> str:
     <p class="lede">{html.escape(lede)}</p>
     {''.join(build_run_section(run) for run in runs)}
   </main>
+  <script>
+    function zoomChart(svg, event, minTs, maxTs) {{
+      const rect = svg.getBoundingClientRect();
+      const clickX = event.clientX - rect.left;
+      const plotStart = 70;
+      const plotEnd = 1100 - 20;
+      const plotWidth = plotEnd - plotStart;
+      if (clickX < plotStart || clickX > plotEnd) return;
+      const timeRange = maxTs - minTs;
+      const clickedTime = minTs + ((clickX - plotStart) / plotWidth) * timeRange;
+      const zoomFactor = 0.2; // zoom to 20% of current range
+      const newTimeRange = timeRange * zoomFactor;
+      const newMinTs = Math.max(minTs, clickedTime - newTimeRange / 2);
+      const newMaxTs = Math.min(maxTs, clickedTime + newTimeRange / 2);
+      const newPlotWidth = plotWidth * (newTimeRange / timeRange);
+      const newPlotStart = plotStart + ((newMinTs - minTs) / timeRange) * plotWidth;
+      svg.setAttribute('viewBox', `${{newPlotStart}} 0 ${{newPlotWidth}} 320`);
+    }}
+    function resetZoom(svg) {{
+      svg.setAttribute('viewBox', '0 0 1100 320');
+    }}
+  </script>
 </body>
 </html>
 """
