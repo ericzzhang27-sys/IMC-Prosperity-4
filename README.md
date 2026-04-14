@@ -10,12 +10,16 @@ This repository is a safe, minimal Python trading interface for IMC Prosperity 4
 - computes fair value from the best bid and best ask midpoint
 - keeps sizes tiny and clips every order against worst-case position limits
 - stores only a small JSON payload in `traderData`
+- includes `trader1.py` as an alternate dual-product strategy:
+  EMERALDS uses a fixed-fair market-maker around `10000`, while TOMATOES uses an inventory-aware reservation-price market-maker
 - includes `visualizer.py` for rendering submission logs or CSV data into an HTML report
+- includes `tomatoes_volatility_analysis.ipynb` for exploratory analysis of TOMATOES price behavior from the CSV data
 
 ## Project layout
 
 - `trader.py`: submission-facing interface and orchestration
-- `trader1.py`: alternate single-file strategy variant for experimentation
+- `trader1.py`: alternate single-file strategy that trades both products with separate logic
+- `tomatoes_volatility_analysis.ipynb`: notebook for TOMATOES volatility and short-horizon trend-persistence analysis
 - `strategy.py`: fair value, quote sizing, and conservative order generation
 - `state_utils.py`: safe readers for books, positions, trades, observations, and `traderData`
 - `risk.py`: hard position guardrails and worst-case fill clipping
@@ -115,6 +119,28 @@ Force CSV mode against local sample data:
 ```bash
 python visualizer.py --mode csv --data-dir data --output csv_report.html
 ```
+
+## Alternate strategy in `trader1.py`
+
+`trader1.py` currently trades both tutorial products with separate strategies:
+
+- `EMERALDS`: fixed-fair market making around `10000`, with simple passive quoting and opportunistic fills when the visible book is clearly cheap or rich versus fair
+- `TOMATOES`: inventory-aware market making using:
+  reservation price `fair_value - theta * inventory`
+  adaptive half-spread that widens with inventory
+  soft and hard inventory thresholds
+  one-tick-inside quoting when it helps reduce inventory without crossing the book
+
+This file is meant for faster experimentation than the more modular `trader.py`.
+
+## Notebook analysis
+
+`tomatoes_volatility_analysis.ipynb` reads the CSV files in `data/` and currently includes:
+
+- rolling volatility from TOMATOES mid-price returns
+- short-horizon trend-persistence analysis using log-return signs
+
+Run the notebook locally in Jupyter to extend the TOMATOES research workflow.
 
 ## Running tests
 
