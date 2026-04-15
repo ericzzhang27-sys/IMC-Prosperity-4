@@ -661,14 +661,17 @@ def build_price_chart(product: str, prices: Sequence[PricePoint], trades: Sequen
         if point.mid_price is not None
     ]
 
-    # Calculate actual min and max ts for zoom
-    actual_min_ts = min(p.timestamp for p in prices) if prices else 0
-    actual_max_ts = max(p.timestamp for p in prices) if prices else 0
-
-    onclick_attr = f' onclick="zoomChart(this, event, {actual_min_ts}, {actual_max_ts})"' if add_zoom else ''
+    svg_attrs = (
+        ' class="zoomable-chart" onmousedown="startChartDrag(event)" onmousemove="dragChart(event)"'
+        ' onmouseup="endChartDrag(event)" onmouseleave="endChartDrag(event)" onwheel="handleChartWheel(event)"'
+        ' data-original-viewbox="0 0 {width} {height}"'
+        .format(width=SVG_WIDTH, height=SVG_HEIGHT)
+        if add_zoom
+        else ""
+    )
 
     svg = f"""
-    <svg viewBox="0 0 {SVG_WIDTH} {SVG_HEIGHT}" role="img" aria-label="{html.escape(product)} price chart"{onclick_attr}>
+    <svg viewBox="0 0 {SVG_WIDTH} {SVG_HEIGHT}" role="img" aria-label="{html.escape(product)} price chart"{svg_attrs}>
       {build_axes(minimum, maximum)}
       {build_day_markers(sampled_prices)}
       {build_polyline(bid_points, "#2f855a")}
@@ -678,7 +681,15 @@ def build_price_chart(product: str, prices: Sequence[PricePoint], trades: Sequen
     </svg>
     """
 
-    reset_button = f'<button onclick="resetZoom(this.previousElementSibling)">Reset Zoom</button>' if add_zoom else ''
+    controls = ""
+    if add_zoom:
+        controls = f"""
+      <div class=\"chart-controls\">
+        <button type=\"button\" onclick=\"zoomChartByFactor(this.parentElement.nextElementSibling, 0.8)\">Zoom In</button>
+        <button type=\"button\" onclick=\"zoomChartByFactor(this.parentElement.nextElementSibling, 1.25)\">Zoom Out</button>
+        <button type=\"button\" onclick=\"resetZoom(this.parentElement.nextElementSibling)\">Reset Zoom</button>
+      </div>
+        """
 
     return f"""
     <section class="chart-card">
@@ -689,13 +700,13 @@ def build_price_chart(product: str, prices: Sequence[PricePoint], trades: Sequen
         <span><span class="legend-swatch mid"></span>Mid Price</span>
         <span><span class="legend-swatch trade"></span>Trade Marker</span>
       </div>
+      {controls}
       {svg}
-      {reset_button}
     </section>
     """
 
 
-def build_single_series_chart(title: str, points: Sequence[TimeValuePoint], color: str) -> str:
+def build_single_series_chart(title: str, points: Sequence[TimeValuePoint], color: str, add_zoom: bool = True) -> str:
     if not points:
         return ""
 
@@ -710,8 +721,27 @@ def build_single_series_chart(title: str, points: Sequence[TimeValuePoint], colo
         for index, point in enumerate(sampled_points)
     ]
 
+    svg_attrs = (
+        ' class="zoomable-chart" onmousedown="startChartDrag(event)" onmousemove="dragChart(event)"'
+        ' onmouseup="endChartDrag(event)" onmouseleave="endChartDrag(event)" onwheel="handleChartWheel(event)"'
+        ' data-original-viewbox="0 0 {width} {height}"'
+        .format(width=SVG_WIDTH, height=SVG_HEIGHT)
+        if add_zoom
+        else ""
+    )
+
+    controls = ""
+    if add_zoom:
+        controls = f"""
+      <div class=\"chart-controls\">
+        <button type=\"button\" onclick=\"zoomChartByFactor(this.parentElement.nextElementSibling, 0.8)\">Zoom In</button>
+        <button type=\"button\" onclick=\"zoomChartByFactor(this.parentElement.nextElementSibling, 1.25)\">Zoom Out</button>
+        <button type=\"button\" onclick=\"resetZoom(this.parentElement.nextElementSibling)\">Reset Zoom</button>
+      </div>
+        """
+
     svg = f"""
-    <svg viewBox="0 0 {SVG_WIDTH} {SVG_HEIGHT}" role="img" aria-label="{html.escape(title)}">
+    <svg viewBox="0 0 {SVG_WIDTH} {SVG_HEIGHT}" role="img" aria-label="{html.escape(title)}"{svg_attrs}>
       {build_axes(minimum, maximum)}
       {build_day_markers(sampled_points)}
       {build_polyline(polyline_points, color, stroke_width=3)}
@@ -721,6 +751,7 @@ def build_single_series_chart(title: str, points: Sequence[TimeValuePoint], colo
     return f"""
     <section class="chart-card">
       <h3>{html.escape(title)}</h3>
+      {controls}
       {svg}
     </section>
     """
@@ -929,6 +960,33 @@ def build_html_report(runs: Sequence[RunData], mode: str) -> str:
       color: var(--muted);
       font-size: 0.95rem;
     }}
+    .chart-controls {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 14px;
+    }}
+    .chart-controls button {{
+      border: 1px solid #d1d5db;
+      border-radius: 999px;
+      background: #ffffff;
+      color: var(--ink);
+      padding: 8px 12px;
+      font: inherit;
+      cursor: pointer;
+      transition: background 0.15s ease, border-color 0.15s ease;
+    }}
+    .chart-controls button:hover {{
+      background: #f8fafc;
+      border-color: #cbd5e1;
+    }}
+    .zoomable-chart {{
+      cursor: grab;
+      touch-action: none;
+    }}
+    .zoomable-chart.dragging {{
+      cursor: grabbing;
+    }}
     @media (max-width: 980px) {{
       .product-section {{ grid-template-columns: 1fr; }}
     }}
@@ -941,26 +999,89 @@ def build_html_report(runs: Sequence[RunData], mode: str) -> str:
     {''.join(build_run_section(run) for run in runs)}
   </main>
   <script>
-    function zoomChart(svg, event, minTs, maxTs) {{
+    function parseViewBox(svg) {
+      const raw = svg.getAttribute('viewBox') || '0 0 1100 320';
+      return raw.split(/\s+/).map(Number);
+    }
+
+    function setViewBox(svg, x, y, width, height) {
+      svg.setAttribute('viewBox', `${x} ${y} ${width} ${height}`);
+    }
+
+    function clamp(value, min, max) {
+      return Math.min(Math.max(value, min), max);
+    }
+
+    function getOriginalWidth(svg) {
+      const original = svg.dataset.originalViewbox;
+      if (!original) {
+        return 1100;
+      }
+      return Number(original.split(/\s+/)[2]) || 1100;
+    }
+
+    function handleChartWheel(event) {
+      event.preventDefault();
+      const svg = event.currentTarget;
       const rect = svg.getBoundingClientRect();
-      const clickX = event.clientX - rect.left;
-      const plotStart = 70;
-      const plotEnd = 1100 - 20;
-      const plotWidth = plotEnd - plotStart;
-      if (clickX < plotStart || clickX > plotEnd) return;
-      const timeRange = maxTs - minTs;
-      const clickedTime = minTs + ((clickX - plotStart) / plotWidth) * timeRange;
-      const zoomFactor = 0.2; // zoom to 20% of current range
-      const newTimeRange = timeRange * zoomFactor;
-      const newMinTs = Math.max(minTs, clickedTime - newTimeRange / 2);
-      const newMaxTs = Math.min(maxTs, clickedTime + newTimeRange / 2);
-      const newPlotWidth = plotWidth * (newTimeRange / timeRange);
-      const newPlotStart = plotStart + ((newMinTs - minTs) / timeRange) * plotWidth;
-      svg.setAttribute('viewBox', `${{newPlotStart}} 0 ${{newPlotWidth}} 320`);
-    }}
-    function resetZoom(svg) {{
-      svg.setAttribute('viewBox', '0 0 1100 320');
-    }}
+      const [x, y, width, height] = parseViewBox(svg);
+      const factor = event.deltaY < 0 ? 0.85 : 1.15;
+      const pointerFraction = clamp((event.clientX - rect.left) / rect.width, 0, 1);
+      const originalWidth = getOriginalWidth(svg);
+      const minWidth = originalWidth * 0.15;
+      const newWidth = clamp(width * factor, minWidth, originalWidth);
+      const center = x + pointerFraction * width;
+      const newX = clamp(center - pointerFraction * newWidth, 0, originalWidth - newWidth);
+      setViewBox(svg, newX, y, newWidth, height);
+    }
+
+    function startChartDrag(event) {
+      if (event.button !== 0) {
+        return;
+      }
+      const svg = event.currentTarget;
+      svg._chartDragState = { dragging: true, lastX: event.clientX };
+      svg.classList.add('dragging');
+    }
+
+    function dragChart(event) {
+      const svg = event.currentTarget;
+      const state = svg._chartDragState;
+      if (!state || !state.dragging) {
+        return;
+      }
+      const [x, y, width, height] = parseViewBox(svg);
+      const rect = svg.getBoundingClientRect();
+      const originalWidth = getOriginalWidth(svg);
+      const deltaX = event.clientX - state.lastX;
+      state.lastX = event.clientX;
+      const offset = -(deltaX / rect.width) * width;
+      const newX = clamp(x + offset, 0, originalWidth - width);
+      setViewBox(svg, newX, y, width, height);
+    }
+
+    function endChartDrag(event) {
+      const svg = event.currentTarget;
+      if (svg._chartDragState) {
+        svg._chartDragState.dragging = false;
+      }
+      svg.classList.remove('dragging');
+    }
+
+    function resetZoom(svg) {
+      const original = svg.dataset.originalViewbox || '0 0 1100 320';
+      svg.setAttribute('viewBox', original);
+    }
+
+    function zoomChartByFactor(svg, factor) {
+      const [x, y, width, height] = parseViewBox(svg);
+      const originalWidth = getOriginalWidth(svg);
+      const minWidth = originalWidth * 0.15;
+      const newWidth = clamp(width * factor, minWidth, originalWidth);
+      const center = x + width * 0.5;
+      const newX = clamp(center - newWidth * 0.5, 0, originalWidth - newWidth);
+      setViewBox(svg, newX, y, newWidth, height);
+    }
   </script>
 </body>
 </html>
