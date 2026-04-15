@@ -6,21 +6,24 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Dict, List
 
+# Import trading data models, fallback to local if not available
 try:
     from datamodel import Order, TradingState
 except ImportError:
     from local_datamodel import Order, TradingState
 
-
+# Constants for the trading product and default settings
 INTARIAN_PEPPER_ROOT = "INTARIAN_PEPPER_ROOT"
 DEFAULT_POSITION_LIMIT = 80
 DEFAULT_STRATEGY_NAME = "signal_aware_passive_market_maker"
 
+# Position limits per product
 POSITION_LIMITS = {
     INTARIAN_PEPPER_ROOT: 80,
 }
 
 
+# Data class holding the current market context for a product
 @dataclass(frozen=True)
 class StrategyContext:
     product: str
@@ -35,6 +38,7 @@ class StrategyContext:
     trader_state: Dict[str, Any]
 
 
+# Result of building orders for a strategy
 @dataclass
 class StrategyResult:
     orders: List[Order] = field(default_factory=list)
@@ -42,6 +46,7 @@ class StrategyResult:
     diagnostics: Dict[str, Any] = field(default_factory=dict)
 
 
+# Features extracted for signal detection
 @dataclass(frozen=True)
 class SignalFeatures:
     trend_fair_value: float | None
@@ -54,6 +59,7 @@ class SignalFeatures:
     volatility_ema_ticks: float | None
 
 
+# State of the signal management
 @dataclass(frozen=True)
 class ManagedSignalState:
     active: bool
@@ -65,6 +71,7 @@ class ManagedSignalState:
     reason: str
 
 
+# Base strategy class
 class PepperStrategy:
     name = "base"
 
@@ -72,6 +79,7 @@ class PepperStrategy:
         raise NotImplementedError
 
 
+# Configuration for the signal-aware passive market maker strategy
 @dataclass(frozen=True)
 class SignalAwarePassiveMarketMakerConfig:
     # Keep this below the exchange limit if you want a softer internal cap.
@@ -79,8 +87,8 @@ class SignalAwarePassiveMarketMakerConfig:
 
     # Trend-driven inventory: keep a mild persistent long bias and only add a
     # smaller temporary overlay when a pullback signal is active.
-    trend_target_inventory_ratio: float = 0.10
-    signal_extra_inventory_ratio: float = 0.08
+    trend_target_inventory_ratio: float = 0.6
+    signal_extra_inventory_ratio: float = 0.2
 
     # Online trend model. We quote around a predicted trending fair value, not
     # around the instantaneous mid.
@@ -104,10 +112,12 @@ class SignalAwarePassiveMarketMakerConfig:
     max_signal_adjustment_ticks: float = 4.0
 
     # Signal quote skew: make bids more aggressive and asks less aggressive.
-    signal_bid_extra_aggression_ticks: int = 1
-    signal_ask_retreat_ticks: int = 2
-    extra_bid_aggression_when_below_target: int = 1
-    extra_ask_retreat_when_below_target: int = 1
+    signal_bid_extra_aggression_ticks: int = 3
+    signal_ask_retreat_ticks: int = 1
+    extra_bid_aggression_when_below_target: int = 3
+    extra_ask_retreat_when_below_target: int = 0
+    extra_bid_conservatism_when_above_target: int = 1
+    extra_ask_aggression_when_above_target: int = 1
 
     # Baseline size and asymmetric size under signal.
     base_bid_size: int = 10
@@ -142,17 +152,18 @@ class SignalAwarePassiveMarketMakerConfig:
     signal_adverse_residual_ticks: float = 5.5
 
 
+# Strategy configurations per product
 PRODUCT_STRATEGY_CONFIGS = {
     INTARIAN_PEPPER_ROOT: SignalAwarePassiveMarketMakerConfig(
         internal_position_limit=None,
-        trend_target_inventory_ratio=0.10,
-        signal_extra_inventory_ratio=0.08,
+        trend_target_inventory_ratio=0.60,
+        signal_extra_inventory_ratio=0.2,
         initial_trend_slope_per_timestamp=0.001,
         trend_level_alpha=0.10,
         trend_slope_alpha=0.03,
         max_abs_trend_slope_per_timestamp=0.01,
-        quote_improvement_ticks=1,
-        base_half_spread_ticks=6.0,
+        quote_improvement_ticks=2,
+        base_half_spread_ticks=4.5,
         inventory_reservation_skew_per_unit=0.05,
         max_inventory_reservation_shift_ticks=4.0,
         imbalance_reservation_skew_ticks=1.5,
@@ -160,19 +171,21 @@ PRODUCT_STRATEGY_CONFIGS = {
         signal_residual_weight=0.8,
         signal_residual_change_weight=1.2,
         max_signal_adjustment_ticks=4.0,
-        signal_bid_extra_aggression_ticks=1,
-        signal_ask_retreat_ticks=2,
-        extra_bid_aggression_when_below_target=1,
-        extra_ask_retreat_when_below_target=1,
-        base_bid_size=10,
-        base_ask_size=10,
-        max_bid_size=18,
-        max_ask_size=18,
+        signal_bid_extra_aggression_ticks=3,
+        signal_ask_retreat_ticks=1,
+        extra_bid_aggression_when_below_target=3,
+        extra_ask_retreat_when_below_target=0,
+        extra_bid_conservatism_when_above_target=1,
+        extra_ask_aggression_when_above_target=1,
+        base_bid_size=12,
+        base_ask_size=8,
+        max_bid_size=22,
+        max_ask_size=16,
         min_bid_size=1,
         min_ask_size=1,
-        inventory_rebalance_step=10,
-        signal_bid_size_boost=3,
-        signal_ask_size_cut=2,
+        inventory_rebalance_step=8,
+        signal_bid_size_boost=5,
+        signal_ask_size_cut=1,
         enable_min_signal_strength_filter=True,
         min_signal_strength_ticks=1.25,
         enable_max_spread_filter=True,
@@ -192,6 +205,7 @@ PRODUCT_STRATEGY_CONFIGS = {
 }
 
 
+# Utility functions for safe attribute/key access and type coercion
 def safe_getattr_or_key(source: Any, name: str, default: Any = None) -> Any:
     if source is None:
         return default
@@ -218,6 +232,7 @@ def coerce_float_or_none(value: Any) -> float | None:
         return None
 
 
+# Functions for reading and serializing trader state
 def read_trader_data(state: Any) -> str:
     raw = safe_getattr_or_key(state, "traderData", "")
     if raw is None:
@@ -256,6 +271,7 @@ def dump_payload(payload: Mapping[str, Any]) -> str:
         return "{}"
 
 
+# Functions for reading market data
 def read_order_depths(state: Any) -> Dict[str, Any]:
     raw = safe_getattr_or_key(state, "order_depths", {})
     if not isinstance(raw, Mapping):
@@ -289,6 +305,7 @@ def normalize_book_side(order_depth: Any, side_name: str) -> Dict[int, int]:
     return normalized
 
 
+# Get the best bid from order depth
 def best_bid(order_depth: Any) -> tuple[int, int] | None:
     buy_orders = normalize_book_side(order_depth, "buy_orders")
     if not buy_orders:
@@ -297,6 +314,7 @@ def best_bid(order_depth: Any) -> tuple[int, int] | None:
     return price, buy_orders[price]
 
 
+# Get the best ask from order depth
 def best_ask(order_depth: Any) -> tuple[int, int] | None:
     sell_orders = normalize_book_side(order_depth, "sell_orders")
     if not sell_orders:
@@ -305,24 +323,29 @@ def best_ask(order_depth: Any) -> tuple[int, int] | None:
     return price, sell_orders[price]
 
 
+# Calculate midpoint price
 def midpoint(best_bid_price: int | None, best_ask_price: int | None) -> float | None:
     if best_bid_price is None or best_ask_price is None:
         return None
     return (best_bid_price + best_ask_price) / 2.0
 
 
+# Calculate remaining buy capacity
 def buy_capacity(position: int, position_limit: int) -> int:
     return max(0, position_limit - position)
 
 
+# Calculate remaining sell capacity
 def sell_capacity(position: int, position_limit: int) -> int:
     return max(0, position + position_limit)
 
 
+# Clamp ratio between -1 and 1
 def clamp_ratio(value: float) -> float:
     return max(-1.0, min(1.0, float(value)))
 
 
+# Get effective position limit
 def effective_strategy_position_limit(exchange_limit: int, internal_limit: int | None) -> int:
     hard_limit = max(0, int(exchange_limit))
     if internal_limit is None:
@@ -330,17 +353,20 @@ def effective_strategy_position_limit(exchange_limit: int, internal_limit: int |
     return max(0, min(hard_limit, int(internal_limit)))
 
 
+# Calculate target inventory from ratio
 def target_inventory_from_ratio(strategy_limit: int, target_inventory_ratio: float) -> int:
     ratio = clamp_ratio(target_inventory_ratio)
     return max(-strategy_limit, min(strategy_limit, int(round(strategy_limit * ratio))))
 
 
+# Get visible size
 def visible_size(volume: int | None) -> int | None:
     if volume is None:
         return None
     return abs(int(volume))
 
 
+# Compute order book imbalance
 def compute_book_imbalance(best_bid_volume: int | None, best_ask_volume: int | None) -> float | None:
     bid_visible = visible_size(best_bid_volume)
     ask_visible = visible_size(best_ask_volume)
@@ -352,6 +378,7 @@ def compute_book_imbalance(best_bid_volume: int | None, best_ask_volume: int | N
     return (bid_visible - ask_visible) / total
 
 
+# Load previous signal state from trader state
 def load_previous_signal_state(trader_state: Mapping[str, Any]) -> ManagedSignalState:
     return ManagedSignalState(
         active=bool(trader_state.get("signal_active", False)),
@@ -364,6 +391,8 @@ def load_previous_signal_state(trader_state: Mapping[str, Any]) -> ManagedSignal
     )
 
 
+# Compute trend fair value and slope
+# Compute trend fair value and slope
 def compute_trend_fair_value(
     ctx: StrategyContext,
     config: SignalAwarePassiveMarketMakerConfig,
@@ -391,6 +420,7 @@ def compute_trend_fair_value(
     return previous_trend_value + (trend_slope * dt), trend_slope
 
 
+# Update trend state based on new observations
 def update_trend_state(
     ctx: StrategyContext,
     trend_fair_value: float | None,
@@ -586,14 +616,20 @@ def evolve_signal_state(
 
 def compute_reservation_values(
     trend_fair_value: float | None,
+    residual: float | None,
     position: int,
     target_inventory: int,
-    signal_adjustment_ticks: float,
     imbalance: float | None,
     config: SignalAwarePassiveMarketMakerConfig,
 ) -> tuple[float | None, float | None, float, float]:
     if trend_fair_value is None:
         return None, None, 0.0, 0.0
+
+    negative_residual_ticks = max(0.0, -(residual or 0.0))
+    residual_shift = min(
+        config.max_signal_adjustment_ticks,
+        config.signal_residual_weight * negative_residual_ticks,
+    )
 
     imbalance_shift = 0.0
     if imbalance is not None:
@@ -603,14 +639,15 @@ def compute_reservation_values(
             min(config.max_imbalance_shift_ticks, imbalance_shift),
         )
 
-    fair_value = trend_fair_value + signal_adjustment_ticks + imbalance_shift
     inventory_gap = position - target_inventory
     raw_inventory_shift = config.inventory_reservation_skew_per_unit * inventory_gap
     inventory_shift = max(
         -config.max_inventory_reservation_shift_ticks,
         min(config.max_inventory_reservation_shift_ticks, raw_inventory_shift),
     )
-    reservation_price = fair_value - inventory_shift
+
+    reservation_price = trend_fair_value + residual_shift + imbalance_shift - inventory_shift
+    fair_value = trend_fair_value + residual_shift + imbalance_shift
     return fair_value, reservation_price, inventory_shift, imbalance_shift
 
 
@@ -639,6 +676,9 @@ def compute_quote_skew_ticks(
     if position < target_inventory:
         bid_extra += int(config.extra_bid_aggression_when_below_target)
         ask_retreat += int(config.extra_ask_retreat_when_below_target)
+    elif position > target_inventory:
+        bid_extra -= int(config.extra_bid_conservatism_when_above_target)
+        ask_retreat += int(config.extra_ask_aggression_when_above_target)
 
     return max(0, bid_extra), max(0, ask_retreat)
 
@@ -678,7 +718,7 @@ def compute_passive_quotes(
     )
 
     bid_anchor = min(ctx.best_ask_price - 1, bid_inside + bid_extra)
-    ask_anchor = max(ctx.best_bid_price + 1, ask_inside + ask_retreat)
+    ask_anchor = max(ctx.best_bid_price + 1, ask_inside + ask_retreat, ctx.best_ask_price)
 
     bid_quote = min(ctx.best_ask_price - 1, max(raw_bid, bid_anchor))
     ask_quote = max(ctx.best_bid_price + 1, max(raw_ask, ask_anchor))
@@ -738,6 +778,7 @@ def compute_quote_sizes(
     return bid_size, ask_size
 
 
+# Main strategy class implementing signal-aware passive market making
 class SignalAwarePassiveMarketMakerStrategy(PepperStrategy):
     name = "signal_aware_passive_market_maker"
 
@@ -775,9 +816,9 @@ class SignalAwarePassiveMarketMakerStrategy(PepperStrategy):
 
         fair_value, reservation_price, inventory_shift, imbalance_shift = compute_reservation_values(
             trend_fair_value=trend_fair_value,
+            residual=features.residual,
             position=ctx.position,
             target_inventory=target_inventory,
-            signal_adjustment_ticks=signal_state.adjustment_ticks,
             imbalance=features.imbalance,
             config=self.config,
         )
@@ -897,6 +938,7 @@ def build_context(
     )
 
 
+# Main trader class that runs the strategy
 class Trader:
     def run(self, state: TradingState):
         result: Dict[str, List[Order]] = {}

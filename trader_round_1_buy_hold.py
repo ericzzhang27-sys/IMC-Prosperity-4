@@ -96,6 +96,14 @@ def normalize_book_side(order_depth: Any, side_name: str) -> Dict[int, int]:
     return normalized
 
 
+def best_bid(order_depth: Any) -> tuple[int, int] | None:
+    buy_orders = normalize_book_side(order_depth, "buy_orders")
+    if not buy_orders:
+        return None
+    price = max(buy_orders)
+    return price, buy_orders[price]
+
+
 def best_ask(order_depth: Any) -> tuple[int, int] | None:
     sell_orders = normalize_book_side(order_depth, "sell_orders")
     if not sell_orders:
@@ -104,43 +112,46 @@ def best_ask(order_depth: Any) -> tuple[int, int] | None:
     return price, sell_orders[price]
 
 
+def passive_bid_price(order_depth: Any) -> int | None:
+    top_bid = best_bid(order_depth)
+    top_ask = best_ask(order_depth)
+    if top_ask is None:
+        return None
+
+    ask_price, _ = top_ask
+    if top_bid is None:
+        return ask_price - 1 if ask_price > 1 else None
+
+    bid_price, _ = top_bid
+    candidate = bid_price + 1
+    if candidate >= ask_price:
+        return None
+    return candidate
+
+
 class Trader:
     def run(self, state: TradingState):
         result: Dict[str, List[Order]] = {INTARIAN_PEPPER_ROOT: []}
         positions = read_positions(state)
         order_depths = read_order_depths(state)
 
-        persisted = load_payload(read_trader_data(state))
-        round_state = persisted.get("round_1_buy_hold", {})
-        if not isinstance(round_state, dict):
-            round_state = {}
-
-        product_state = round_state.get(INTARIAN_PEPPER_ROOT, {})
-        if not isinstance(product_state, dict):
-            product_state = {}
-
-        already_submitted = bool(product_state.get("submitted_initial_buy", False))
         position_limit = POSITION_LIMITS.get(INTARIAN_PEPPER_ROOT, DEFAULT_POSITION_LIMIT)
         current_position = positions.get(INTARIAN_PEPPER_ROOT, 0)
         order_depth = order_depths.get(INTARIAN_PEPPER_ROOT)
 
-        next_state = dict(product_state)
-        if not already_submitted and order_depth is not None:
+        if order_depth is not None:
             top_ask = best_ask(order_depth)
-            if top_ask is not None:
+            buy_quantity = max(0, position_limit - current_position)
+            if top_ask is not None and buy_quantity > 0:
                 ask_price, _ = top_ask
-                buy_quantity = max(0, position_limit - current_position)
-                if buy_quantity > 0:
-                    result[INTARIAN_PEPPER_ROOT].append(Order(INTARIAN_PEPPER_ROOT, ask_price, buy_quantity))
-            next_state["submitted_initial_buy"] = True
-            next_state["submission_timestamp"] = coerce_int_or_none(safe_getattr_or_key(state, "timestamp", 0)) or 0
+                result[INTARIAN_PEPPER_ROOT].append(
+                    Order(INTARIAN_PEPPER_ROOT, ask_price, buy_quantity)
+                )
 
         trader_data = dump_payload(
             {
                 "version": 1,
-                "round_1_buy_hold": {
-                    INTARIAN_PEPPER_ROOT: next_state,
-                },
+                "round_1_buy_hold": {},
             }
         )
         return result, 0, trader_data
