@@ -36,17 +36,6 @@ PRODUCT_CONFIGS = {
 DEFAULT_PRODUCT_CONFIG = ProductConfig(base_order_size=1, min_quote_edge=1)
 
 
-# Registry mapping products to their trading strategies
-STRATEGY_REGISTRY: Dict[str, ProductStrategy] = {
-    "EMERALDS": ConservativeMarketMakerStrategy(
-        ProductConfig(base_order_size=2, min_quote_edge=1)
-    ),
-    "TOMATOES": ConservativeMarketMakerStrategy(
-        ProductConfig(base_order_size=1, min_quote_edge=1)
-    ),
-}
-
-
 def safe_getattr_or_key(source: Any, name: str, default: Any = None) -> Any:
     """
     Safely retrieves an attribute from an object or a key from a mapping.
@@ -465,6 +454,17 @@ class ConservativeMarketMakerStrategy(ProductStrategy):
             previous_fair=previous_fair,
             config=self.config,
         )
+
+
+# Registry mapping products to their trading strategies.
+STRATEGY_REGISTRY: Dict[str, ProductStrategy] = {
+    "EMERALDS": ConservativeMarketMakerStrategy(
+        ProductConfig(base_order_size=2, min_quote_edge=1)
+    ),
+    "TOMATOES": ConservativeMarketMakerStrategy(
+        ProductConfig(base_order_size=1, min_quote_edge=1)
+    ),
+}
 
 
 class Trader:

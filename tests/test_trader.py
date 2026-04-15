@@ -4,10 +4,10 @@ import csv
 import unittest
 from pathlib import Path
 
+from core.persistence import dump_trader_data, load_trader_data
+from core.risk import clip_orders_to_position_limit, violates_position_limit
+from core.strategy import estimate_fair_value
 from local_datamodel import Order, OrderDepth, TradingState
-from persistence import dump_trader_data, load_trader_data
-from risk import clip_orders_to_position_limit, violates_position_limit
-from strategy import estimate_fair_value
 from trader import Trader
 
 
