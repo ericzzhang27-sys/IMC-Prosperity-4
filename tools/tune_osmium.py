@@ -5,7 +5,6 @@ import csv
 import itertools
 import json
 import math
-import os
 import re
 import statistics
 import subprocess
@@ -27,7 +26,6 @@ from strategies.round_1_ash import (  # noqa: E402
     DEFAULT_CONFIG,
     DEFAULT_POSITION_LIMIT,
     OSMIUM_CONFIG_FIELDS,
-    OSMIUM_CONFIG_JSON_ENV,
     POSITION_LIMITS,
     PRODUCT,
     build_osmium_config,
@@ -367,6 +365,28 @@ def ensure_directory(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
+def create_algorithm_wrapper(output_dir: Path, run_id: int, params: dict[str, Any]) -> Path:
+    wrapper_dir = output_dir / "run_algorithms"
+    ensure_directory(wrapper_dir)
+
+    wrapper_path = wrapper_dir / f"osmium_run_{run_id:04d}.py"
+    payload = json.dumps(params, sort_keys=True, separators=(",", ":"))
+    wrapper_source = "\n".join(
+        [
+            "from strategies.round_1_ash import Trader as BaseTrader",
+            "",
+            f"PARAM_OVERRIDES = {payload}",
+            "",
+            "class Trader(BaseTrader):",
+            "    def __init__(self):",
+            "        super().__init__(config_overrides=PARAM_OVERRIDES)",
+            "",
+        ]
+    )
+    wrapper_path.write_text(wrapper_source, encoding="utf-8")
+    return wrapper_path
+
+
 def run_backtester(
     algorithm: Path,
     days: Sequence[str],
@@ -377,6 +397,7 @@ def run_backtester(
 ) -> dict[str, Any]:
     logs_dir = output_dir / "run_logs"
     ensure_directory(logs_dir)
+    wrapper_path = create_algorithm_wrapper(output_dir, run_id, params)
 
     run_prefix = f"run_{run_id:04d}"
     log_path = logs_dir / f"{run_prefix}.log"
@@ -387,7 +408,7 @@ def run_backtester(
         sys.executable,
         "-m",
         "prosperity4bt",
-        str(algorithm),
+        str(wrapper_path),
         *days,
         "--out",
         str(log_path),
@@ -396,16 +417,12 @@ def run_backtester(
         "--no-progress",
     ]
 
-    env = os.environ.copy()
-    env[OSMIUM_CONFIG_JSON_ENV] = json.dumps(params, sort_keys=True, separators=(",", ":"))
-
     started = time.perf_counter()
     completed = subprocess.run(
         command,
         cwd=ROOT,
         capture_output=True,
         text=True,
-        env=env,
     )
     runtime_sec = time.perf_counter() - started
 
@@ -419,6 +436,7 @@ def run_backtester(
         "stdout_path": str(stdout_path),
         "stderr_path": str(stderr_path),
         "log_path": str(log_path),
+        "algorithm_path": str(wrapper_path),
     }
 
     if completed.returncode != 0:
@@ -929,6 +947,7 @@ def main() -> None:
                     "status": backtest_result["status"],
                     "returncode": backtest_result["returncode"],
                     "runtime_sec": backtest_result["runtime_sec"],
+                    "algorithm_path": backtest_result["algorithm_path"],
                     "stdout_path": backtest_result["stdout_path"],
                     "stderr_path": backtest_result["stderr_path"],
                     "log_path": backtest_result["log_path"],

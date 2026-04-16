@@ -12,14 +12,16 @@ try:
 except ImportError:
     from local_datamodel import Order, TradingState
 
-# Constants for the trading product and default settings
+# Constants for the trading products and default settings
 INTARIAN_PEPPER_ROOT = "INTARIAN_PEPPER_ROOT"
+ASH_COATED_OSMIUM = "ASH_COATED_OSMIUM"
 DEFAULT_POSITION_LIMIT = 80
-DEFAULT_STRATEGY_NAME = "buy_and_hold"
+OSMIUM_FAIR_VALUE = 10000
 
 # Position limits per product
 POSITION_LIMITS = {
     INTARIAN_PEPPER_ROOT: 80,
+    ASH_COATED_OSMIUM: 80,
 }
 
 
@@ -152,6 +154,14 @@ class SignalAwarePassiveMarketMakerConfig:
     signal_adverse_residual_ticks: float = 5.5
 
 
+@dataclass(frozen=True)
+class SimpleOsmiumConfig:
+    fair_value: int = OSMIUM_FAIR_VALUE
+    half_spread_ticks: int = 2
+    order_size: int = 10
+    fair_value_quote_buffer: int = 2
+
+
 # Strategy configurations per product
 PRODUCT_STRATEGY_CONFIGS = {
     INTARIAN_PEPPER_ROOT: SignalAwarePassiveMarketMakerConfig(
@@ -203,6 +213,8 @@ PRODUCT_STRATEGY_CONFIGS = {
         signal_adverse_residual_ticks=5.5,
     )
 }
+
+OSMIUM_SIMPLE_CONFIG = SimpleOsmiumConfig()
 
 
 # Utility functions for safe attribute/key access and type coercion
@@ -807,14 +819,109 @@ class BuyAndHoldStrategy(PepperStrategy):
         )
 
 
+def choose_simple_osmium_bid_quote(ctx: StrategyContext, config: SimpleOsmiumConfig) -> int | None:
+    max_bid = config.fair_value - config.fair_value_quote_buffer
+    base_bid = min(config.fair_value - config.half_spread_ticks, max_bid)
+    bid_quote = base_bid
+
+    # Default behavior is to improve the current best bid by one tick, unless
+    # doing so would move the quote too close to fair or through the spread.
+    if ctx.best_bid_price is not None:
+        bid_quote = ctx.best_bid_price + 1
+
+    if ctx.best_ask_price is not None and bid_quote >= ctx.best_ask_price:
+        bid_quote = ctx.best_ask_price - 1
+
+    if bid_quote > max_bid:
+        bid_quote = max_bid
+
+    if ctx.best_ask_price is not None and bid_quote >= ctx.best_ask_price:
+        return None
+    return bid_quote
+
+
+def choose_simple_osmium_ask_quote(ctx: StrategyContext, config: SimpleOsmiumConfig) -> int | None:
+    min_ask = config.fair_value + config.fair_value_quote_buffer
+    base_ask = max(config.fair_value + config.half_spread_ticks, min_ask)
+    ask_quote = base_ask
+
+    # Default behavior is to improve the current best ask by one tick, unless
+    # doing so would move the quote too close to fair or through the spread.
+    if ctx.best_ask_price is not None:
+        ask_quote = ctx.best_ask_price - 1
+
+    if ctx.best_bid_price is not None and ask_quote <= ctx.best_bid_price:
+        ask_quote = ctx.best_bid_price + 1
+
+    if ask_quote < min_ask:
+        ask_quote = min_ask
+
+    if ctx.best_bid_price is not None and ask_quote <= ctx.best_bid_price:
+        return None
+    return ask_quote
+
+
+class SimpleOsmiumMarketMakerStrategy(PepperStrategy):
+    name = "simple_osmium_mm"
+
+    def __init__(self, config: SimpleOsmiumConfig) -> None:
+        self.config = config
+
+    def build_orders(self, ctx: StrategyContext) -> StrategyResult:
+        bid_quote = choose_simple_osmium_bid_quote(ctx, self.config)
+        ask_quote = choose_simple_osmium_ask_quote(ctx, self.config)
+
+        buy_size = min(self.config.order_size, buy_capacity(ctx.position, ctx.position_limit))
+        sell_size = min(self.config.order_size, sell_capacity(ctx.position, ctx.position_limit))
+
+        orders: List[Order] = []
+        if bid_quote is not None and buy_size > 0:
+            orders.append(Order(ctx.product, int(bid_quote), int(buy_size)))
+        if ask_quote is not None and sell_size > 0:
+            orders.append(Order(ctx.product, int(ask_quote), -int(sell_size)))
+
+        return StrategyResult(
+            orders=orders,
+            state_update={
+                "fair_value": self.config.fair_value,
+                "base_bid": self.config.fair_value - self.config.half_spread_ticks,
+                "base_ask": self.config.fair_value + self.config.half_spread_ticks,
+                "chosen_bid": bid_quote,
+                "chosen_ask": ask_quote,
+                "buy_size": buy_size if bid_quote is not None else 0,
+                "sell_size": sell_size if ask_quote is not None else 0,
+            },
+            diagnostics={
+                "strategy": self.name,
+                "position": ctx.position,
+                "mid_price": ctx.mid_price,
+                "best_bid_price": ctx.best_bid_price,
+                "best_ask_price": ctx.best_ask_price,
+                "fair_value": self.config.fair_value,
+                "chosen_bid": bid_quote,
+                "chosen_ask": ask_quote,
+                "buy_size": buy_size if bid_quote is not None else 0,
+                "sell_size": sell_size if ask_quote is not None else 0,
+            },
+        )
+
+
 STRATEGY_REGISTRY: Dict[str, PepperStrategy] = {
     BuyAndHoldStrategy.name: BuyAndHoldStrategy(),
+    SimpleOsmiumMarketMakerStrategy.name: SimpleOsmiumMarketMakerStrategy(OSMIUM_SIMPLE_CONFIG),
 }
 
 
-def choose_active_strategy(product_state: Mapping[str, Any]) -> PepperStrategy:
-    strategy_name = str(product_state.get("active_strategy", DEFAULT_STRATEGY_NAME))
-    return STRATEGY_REGISTRY.get(strategy_name, STRATEGY_REGISTRY[DEFAULT_STRATEGY_NAME])
+PRODUCT_DEFAULT_STRATEGIES = {
+    INTARIAN_PEPPER_ROOT: BuyAndHoldStrategy.name,
+    ASH_COATED_OSMIUM: SimpleOsmiumMarketMakerStrategy.name,
+}
+
+
+def choose_active_strategy(product: str, product_state: Mapping[str, Any]) -> PepperStrategy:
+    default_strategy_name = PRODUCT_DEFAULT_STRATEGIES.get(product, BuyAndHoldStrategy.name)
+    strategy_name = str(product_state.get("active_strategy", default_strategy_name))
+    return STRATEGY_REGISTRY.get(strategy_name, STRATEGY_REGISTRY[default_strategy_name])
 
 
 def build_context(
@@ -851,48 +958,55 @@ class Trader:
         result: Dict[str, List[Order]] = {}
         positions = read_positions(state)
         order_depths = read_order_depths(state)
+        timestamp = coerce_int_or_none(safe_getattr_or_key(state, "timestamp", 0)) or 0
 
         persisted = load_payload(read_trader_data(state))
         round_state = persisted.get("round_1", {})
         if not isinstance(round_state, dict):
             round_state = {}
 
-        product_state = round_state.get(INTARIAN_PEPPER_ROOT, {})
-        if not isinstance(product_state, dict):
-            product_state = {}
+        next_round_state: Dict[str, Dict[str, Any]] = {}
+        for product in (INTARIAN_PEPPER_ROOT, ASH_COATED_OSMIUM):
+            product_state = round_state.get(product, {})
+            if not isinstance(product_state, dict):
+                product_state = {}
 
-        order_depth = order_depths.get(INTARIAN_PEPPER_ROOT)
-        if order_depth is None:
-            result[INTARIAN_PEPPER_ROOT] = []
-            next_state = dict(product_state)
-        else:
+            order_depth = order_depths.get(product)
+            if order_depth is None:
+                result[product] = []
+                next_state = dict(product_state)
+                next_state["status"] = "no_book"
+                next_state["last_timestamp"] = timestamp
+                next_round_state[product] = next_state
+                continue
+
             ctx = build_context(
-                product=INTARIAN_PEPPER_ROOT,
+                product=product,
                 order_depth=order_depth,
-                timestamp=coerce_int_or_none(safe_getattr_or_key(state, "timestamp", 0)) or 0,
-                position=positions.get(INTARIAN_PEPPER_ROOT, 0),
-                position_limit=POSITION_LIMITS.get(INTARIAN_PEPPER_ROOT, DEFAULT_POSITION_LIMIT),
+                timestamp=timestamp,
+                position=positions.get(product, 0),
+                position_limit=POSITION_LIMITS.get(product, DEFAULT_POSITION_LIMIT),
                 trader_state=product_state,
             )
-            strategy = choose_active_strategy(product_state)
+            strategy = choose_active_strategy(product, product_state)
             strategy_result = strategy.build_orders(ctx)
-            result[INTARIAN_PEPPER_ROOT] = strategy_result.orders
+            result[product] = strategy_result.orders
 
             next_state = dict(product_state)
             next_state.update(strategy_result.state_update)
             next_state["active_strategy"] = strategy.name
+            next_state["status"] = "ok"
             if ctx.mid_price is not None:
                 next_state["last_mid"] = round(ctx.mid_price, 4)
             next_state["last_timestamp"] = ctx.timestamp
             if strategy_result.diagnostics:
                 next_state["diagnostics"] = strategy_result.diagnostics
+            next_round_state[product] = next_state
 
         trader_data = dump_payload(
             {
                 "version": 1,
-                "round_1": {
-                    INTARIAN_PEPPER_ROOT: next_state,
-                },
+                "round_1": next_round_state,
             }
         )
         return result, 0, trader_data

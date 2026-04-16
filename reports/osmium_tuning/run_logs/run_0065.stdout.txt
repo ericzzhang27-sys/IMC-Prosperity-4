@@ -1,0 +1,31 @@
+Backtesting C:\IMC PROSPERITY 4\round_1_ash.py on round 1 day -2
+ASH_COATED_OSMIUM: 5,609
+INTARIAN_PEPPER_ROOT: 0
+Total profit: 5,609
+
+Backtesting C:\IMC PROSPERITY 4\round_1_ash.py on round 1 day -1
+ASH_COATED_OSMIUM: 6,553
+INTARIAN_PEPPER_ROOT: 0
+Total profit: 6,553
+
+Backtesting C:\IMC PROSPERITY 4\round_1_ash.py on round 1 day 0
+ASH_COATED_OSMIUM: 5,938
+INTARIAN_PEPPER_ROOT: 0
+Total profit: 5,938
+
+Profit summary:
+Round 1 day -2: 5,609
+Round 1 day -1: 6,553
+Round 1 day 0: 5,938
+Total profit: 18,100
+
+Risk metrics (full trading period):
+  final_pnl: 18,100
+  sharpe_ratio: 12.5913
+  annualized_sharpe: 199.8809
+  sortino_ratio: inf
+  max_drawdown_abs: 1,598,770
+  max_drawdown_pct: 2.8131
+  calmar_ratio: 0.0113
+
+Successfully saved backtest results to reports\osmium_tuning\run_logs\run_0065.log

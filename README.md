@@ -143,7 +143,7 @@ Run the notebook locally in Jupyter to extend the TOMATOES research workflow.
 
 ## Tuning OSMIUM locally
 
-`strategies/round_1_ash.py` now exposes its key OSMIUM parameters through the `OsmiumConfig` dataclass and also supports JSON overrides through the `OSMIUM_CONFIG_JSON` environment variable. The local tuner uses that hook to backtest many parameter combinations without editing the strategy code.
+`strategies/round_1_ash.py` now exposes its key OSMIUM parameters through the `OsmiumConfig` dataclass. The local tuner backtests many parameter combinations by generating small temporary wrapper algorithms, so the submission strategy itself does not need environment-variable hooks.
 
 Install the Prosperity 4 backtester once:
 
